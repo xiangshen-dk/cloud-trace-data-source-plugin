@@ -71,11 +71,19 @@ export class DataSource extends DataSourceWithBackend<Query, CloudTraceOptions> 
   }
 
   applyTemplateVariables(query: Query, scopedVars: ScopedVars): Query {
+    let normalizedQuery = { ...query };
+
+    // Handle Grafana's standard "Query with traces" format
+    if (query.queryType === 'traceql' && (query as any).query) {
+      normalizedQuery.queryType = 'traceID';
+      normalizedQuery.traceId = (query as any).query;
+    }
+
     return {
-      ...query,
-      queryText: this.templateSrv.replace(query.queryText, scopedVars),
-      projectId: this.templateSrv.replace(query.projectId, scopedVars),
-      traceId: this.templateSrv.replace(query.traceId, scopedVars),
+      ...normalizedQuery,
+      queryText: this.templateSrv.replace(normalizedQuery.queryText, scopedVars),
+      projectId: this.templateSrv.replace(normalizedQuery.projectId, scopedVars),
+      traceId: this.templateSrv.replace(normalizedQuery.traceId || '', scopedVars),
     };
   }
 
@@ -109,6 +117,20 @@ export class DataSource extends DataSourceWithBackend<Query, CloudTraceOptions> 
         };
       })
     );
+  }
+
+  /**
+   * Provides Grafana with the correct query shape for trace ID lookups.
+   * This is called when the user clicks "Query with traces" from exemplars,
+   * ensuring the query is constructed with the correct queryType and traceId
+   * fields that this datasource expects.
+   */
+  getTraceQuery(traceId: string): Partial<Query> {
+    return {
+      queryType: 'traceID',
+      traceId: traceId,
+      projectId: '',
+    };
   }
 
   /**

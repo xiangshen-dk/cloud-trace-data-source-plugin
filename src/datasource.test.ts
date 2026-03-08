@@ -110,6 +110,48 @@ describe('Google Cloud Trace Data Source', () => {
             expect(result[0]).toEqual(expectedFrame);
         });
     });
+
+    describe('applyTemplateVariables', () => {
+        it('normalizes traceql query from "Query with traces" to traceID format', () => {
+            const ds = makeDataSourceWithTemplateSrv();
+            const traceId = '52b1a992074849e0beba5eff8c65acf0';
+            const query = {
+                refId: 'A',
+                projectId: 'my-project',
+                queryType: 'traceql',
+                query: traceId,
+                queryText: 'MinLatency:100ms',
+            } as any;
+            const result = ds.applyTemplateVariables(query, {});
+            expect(result.queryType).toBe('traceID');
+            expect(result.traceId).toBe(traceId);
+        });
+
+        it('leaves standard traceID queries unchanged', () => {
+            const ds = makeDataSourceWithTemplateSrv();
+            const query = {
+                refId: 'A',
+                projectId: 'my-project',
+                queryType: 'traceID',
+                traceId: 'abc123',
+            };
+            const result = ds.applyTemplateVariables(query, {});
+            expect(result.queryType).toBe('traceID');
+            expect(result.traceId).toBe('abc123');
+        });
+
+        it('leaves filter queries unchanged', () => {
+            const ds = makeDataSourceWithTemplateSrv();
+            const query = {
+                refId: 'A',
+                projectId: 'my-project',
+                queryText: 'MinLatency:100ms',
+            };
+            const result = ds.applyTemplateVariables(query, {});
+            expect(result.queryType).toBeUndefined();
+            expect(result.traceId).toBe('');
+        });
+    });
 });
 
 const makeDataSource = () => {
@@ -125,6 +167,27 @@ const makeDataSource = () => {
         name: 'something',
         readOnly: true,
     });
+}
+
+const makeDataSourceWithTemplateSrv = () => {
+    const mockTemplateSrv = {
+        replace: (s: string) => s,
+        getVariables: () => [],
+        containsTemplate: () => false,
+        updateTimeRange: () => { },
+    } as any;
+    return new DataSource({
+        id: random(100),
+        type: 'googlecloud-trace-datasource',
+        access: 'direct',
+        meta: {} as DataSourcePluginMeta,
+        uid: `${random(100)}`,
+        jsonData: {
+            authenticationType: GoogleAuthType.JWT,
+        },
+        name: 'something',
+        readOnly: true,
+    }, mockTemplateSrv);
 }
 
 const makeFrame = (datasourceUid: string) => {

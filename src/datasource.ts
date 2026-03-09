@@ -24,6 +24,7 @@ import { CloudTraceVariableSupport } from './variables';
 
 export class DataSource extends DataSourceWithBackend<Query, CloudTraceOptions> {
   authenticationType: string;
+  annotations = {};
 
   constructor(
     private instanceSettings: DataSourceInstanceSettings<CloudTraceOptions>,

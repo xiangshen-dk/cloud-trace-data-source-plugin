@@ -5,6 +5,7 @@
   "category": "tracing",
   "id": "googlecloud-trace-datasource",
   "metrics": true,
+  "annotations": true,
   "backend": true,
   "tracing": true,
   "executable": "gpx_gcp-tracing",
@@ -12,13 +13,14 @@
     "maxDataPoints": true
   },
   "info": {
-    "description": "",
+    "description": "A Grafana data source plugin for querying and visualizing traces from Google Cloud Trace.",
     "author": {
       "name": "GCP trace team",
       "url": "https://cloud.google.com/trace"
     },
     "keywords": [
-      "gcp", "cloud trace"
+      "gcp",
+      "cloud trace"
     ],
     "logos": {
       "small": "img/logo.svg",
@@ -35,8 +37,14 @@
       }
     ],
     "screenshots": [
-      {"name": "cloud_trace_config", "path": "img/cloud_trace_config.png"},
-      {"name": "cloud_trace_explore_view", "path": "img/cloud_trace_explore_view.png"}
+      {
+        "name": "cloud_trace_config",
+        "path": "img/cloud_trace_config.png"
+      },
+      {
+        "name": "cloud_trace_explore_view",
+        "path": "img/cloud_trace_explore_view.png"
+      }
     ],
     "version": "%VERSION%",
     "updated": "%TODAY%"

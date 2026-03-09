@@ -29,6 +29,7 @@ export const authTypes: Array<SelectableValue<string>> = [
   { label: 'Google JWT File', value: GoogleAuthType.JWT },
   { label: 'GCE Default Service Account', value: GoogleAuthType.GCE },
   { label: 'Access Token', value: 'accessToken' },
+  { label: 'OAuth Passthrough', value: 'oauthPassthrough' },
 ];
 
 /**
@@ -38,6 +39,8 @@ export interface DataSourceOptionsExt extends DataSourceOptions {
   gceDefaultProject?: string;
   serviceAccountToImpersonate?: string;
   usingImpersonation?: boolean;
+  oauthPassThru?: boolean;
+  universeDomain?: string;
 }
 
 /**

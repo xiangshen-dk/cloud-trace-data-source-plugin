@@ -23,7 +23,11 @@ You can follow the steps to enable it:
 1. Navigate to the [cloud resource manager API page](https://console.cloud.google.com/apis/library/cloudresourcemanager.googleapis.com) in GCP and select your project
 2. Press the `Enable` button
 
-### Generate a JWT file & Assign IAM Permissions
+### Authentication
+
+The plugin supports multiple authentication methods. You can select the authentication type from the dropdown in the configuration editor.
+
+#### Google JWT File
 
 1. If you don't have gcp project, add a new gcp project. [link](https://cloud.google.com/resource-manager/docs/creating-managing-projects#console)
 2. Open the [Credentials](https://console.developers.google.com/apis/credentials) page in the Google API Console
@@ -36,20 +40,38 @@ You can follow the steps to enable it:
 
 If you want to access traces in multiple cloud projects, you need to ensure the service account has permission to read logs from all of them.
 
-If you host Grafana on a GCE VM, you can also use the [Compute Engine service account](https://cloud.google.com/compute/docs/access/service-accounts#serviceaccount). You need to make sure the service account has sufficient permissions to access the traces in all projects.
+#### GCE Default Service Account
 
-Similar to [Prometheus data sources on Google Cloud](https://cloud.google.com/stackdriver/docs/managed-prometheus/query#use-serverless), you can also configure a scheduled job to use an OAuth2 access token to view the traces. Please follow the steps in the [data source syncer README](https://github.com/GoogleCloudPlatform/blob/main/datasource-syncer/README.md) to configure it.
+If you host Grafana on a GCE VM, you can use the [Compute Engine service account](https://cloud.google.com/compute/docs/access/service-accounts#serviceaccount). You need to make sure the service account has sufficient permissions to access the traces in all projects.
 
-### Service account impersonation
+#### Access Token
+
+Similar to [Prometheus data sources on Google Cloud](https://cloud.google.com/stackdriver/docs/managed-prometheus/query#use-serverless), you can configure a scheduled job to use an OAuth2 access token to view the traces. Please follow the steps in the [data source syncer README](https://github.com/GoogleCloudPlatform/blob/main/datasource-syncer/README.md) to configure it.
+
+#### OAuth Passthrough
+
+OAuth Passthrough lets users authenticate with their own Google OAuth identity through Grafana. This requires Grafana to be configured with a Google OAuth provider that has the `https://www.googleapis.com/auth/cloud-platform.read-only` scope. When enabled, the plugin forwards the user's browser OAuth token to GCP on each request.
+
+> **Note:** When using OAuth Passthrough, you must provide a **Default Project ID** in the configuration since the plugin cannot auto-detect the project from forwarded credentials.
+
+### Service Account Impersonation
 You can also configure the plugin to use [service account impersonation](https://cloud.google.com/iam/docs/service-account-impersonation).
 You need to ensure the service account used by this plugin has the `iam.serviceAccounts.getAccessToken` permission. This permission is in roles like the [Service Account Token Creator role](https://cloud.google.com/iam/docs/understanding-roles#iam.serviceAccountTokenCreator) (roles/iam.serviceAccountTokenCreator). Also, the service account impersonated
 by this plugin needs cloud trace user and project list permissions.
+
+> **Note:** Service account impersonation is available with JWT and GCE authentication types, but not with OAuth Passthrough.
+
+### Universe Domain
+
+If you are using a non-default universe (e.g., a sovereign cloud), you can configure the **Universe Domain** field in the data source settings. Leave it empty to use the default (`googleapis.com`).
+
 ### Grafana Configuration
 1. With Grafana restarted, navigate to `Configuration -> Data sources` (or the route `/datasources`)
 2. Click "Add data source"
 3. Select "Google Cloud Trace"
-4. Provide credentials in a JWT file, either by using the file selector or pasting the contents of the file.
-5. Click "Save & test" to test that traces can be queried from Cloud Trace.
+4. Select the authentication type from the dropdown (JWT, GCE, Access Token, or OAuth Passthrough)
+5. Provide the required credentials for your chosen authentication method
+6. Click "Save & test" to test that traces can be queried from Cloud Trace.
 
 ![image info](https://github.com/GoogleCloudPlatform/cloud-trace-data-source-plugin/blob/main/src/img/cloud_trace_config.png?raw=true)
 
@@ -76,8 +98,38 @@ by this plugin needs cloud trace user and project list permissions.
     After making a `Filter` query, a table will be displayed with all of the matching traces
     (Example: `http.scheme:http http.server_name:testserver MinLatency:500ms`)
 
+### Annotations
+
+The plugin supports Grafana annotations. You can use trace queries as annotation sources to overlay trace data on your dashboards.
+
 ### Supported variables
 The plugin currently supports variables for the GCP projects and a trace id. The project variable is a query one, and the trace id is a text or custom one.
+
+## Development
+
+### Prerequisites
+- Node.js >= 20
+- Go >= 1.25
+- [Mage](https://magefile.org/)
+
+### Building
+```bash
+# Frontend
+yarn install
+yarn build
+
+# Backend
+mage -v
+```
+
+### Testing
+```bash
+# Frontend tests
+yarn test:ci
+
+# Backend tests
+go test ./pkg/...
+```
 
 ## Licenses
 Cloud Trace Logo (`src/img/logo.svg`) is from Google Cloud's [Official icons and sample diagrams](https://cloud.google.com/icons)

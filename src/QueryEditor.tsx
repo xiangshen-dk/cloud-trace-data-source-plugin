@@ -33,12 +33,28 @@ export function CloudTraceQueryEditor({ datasource, query, range, onChange, onRu
       onRunQuery();
     }
   };
-  
+
   const onKeyDownInput = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter' && (event.shiftKey || event.ctrlKey)) {
       event.preventDefault();
       onRunQuery();
     }
+  };
+
+  const [fetchError, setFetchError] = useState<string | undefined>();
+
+  /**
+   * Sanitize fetch errors — Grafana's backendSrv may include raw HTML bodies
+   * from proxy/universe-domain errors in err.data or err.message.
+   */
+  const sanitizeFetchError = (err: unknown): string => {
+    const raw = (err as any)?.data ?? (err as any)?.message ?? String(err);
+    const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
+    // Detect HTML content (full page or gRPC content-type error)
+    if (/<html[\s>]|<!doctype\s+html/i.test(text) || text.includes('text/html')) {
+      return 'The server returned an HTML error page. If you have configured a Universe Domain, please verify it is correct.';
+    }
+    return text;
   };
 
   const [projects, setProjects] = useState<Array<SelectableValue<string>>>();
@@ -48,7 +64,8 @@ export function CloudTraceQueryEditor({ datasource, query, range, onChange, onRu
         label: project,
         value: project,
       })));
-    });
+      setFetchError(undefined);
+    }).catch(err => setFetchError(sanitizeFetchError(err)));
   }, [datasource]);
 
 
@@ -99,7 +116,7 @@ export function CloudTraceQueryEditor({ datasource, query, range, onChange, onRu
         key = `${key}:${value.substring(0, value.indexOf(":"))}`
         value = value.substring(value.indexOf(":") + 1, value.length);
       }
-      
+
       let specialChars = ""
       // Attempt to grab any special chars (+ or ^) so we can tack them on after removing quotes
       if (value.length > 1) {
@@ -215,6 +232,11 @@ export function CloudTraceQueryEditor({ datasource, query, range, onChange, onRu
           />
         </InlineField>
       </InlineFieldRow>
+      {fetchError && (
+        <div style={{ color: 'rgb(224, 93, 93)', marginBottom: '8px', padding: '8px', border: '1px solid rgb(224, 93, 93)', borderRadius: '4px', background: 'rgba(224, 93, 93, 0.1)' }}>
+          ⚠️ {fetchError}
+        </div>
+      )}
       {renderExploreBody()}
       <Tooltip content='Click to view these results in the Google Cloud console'>
         <LinkButton

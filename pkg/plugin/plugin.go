@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -43,11 +44,12 @@ var (
 )
 
 const (
-	privateKeyKey             = "privateKey"
-	gceAuthentication         = "gce"
-	jwtAuthentication         = "jwt"
-	accessTokenAuthentication = "accessToken"
-	accessTokenKey            = "accessToken"
+	privateKeyKey                = "privateKey"
+	gceAuthentication            = "gce"
+	jwtAuthentication            = "jwt"
+	accessTokenAuthentication    = "accessToken"
+	accessTokenKey               = "accessToken"
+	oauthPassThruAuthentication  = "oauthPassthrough"
 )
 
 // config is the fields parsed from the front end
@@ -58,6 +60,8 @@ type config struct {
 	TokenURI                    string `json:"tokenUri"`
 	ServiceAccountToImpersonate string `json:"serviceAccountToImpersonate"`
 	UsingImpersonation          bool   `json:"usingImpersonation"`
+	OAuthPassThru               bool   `json:"oauthPassThru"`
+	UniverseDomain              string `json:"universeDomain"`
 }
 
 // toServiceAccountJSON creates the serviceAccountJSON bytes from the config fields
@@ -97,6 +101,15 @@ func NewCloudTraceDatasource(ctx context.Context, settings backend.DataSourceIns
 		conf.AuthType = accessTokenAuthentication
 	}
 
+	// For OAuth passthrough, we don't create a persistent client.
+	// Instead, a per-request client is created using the forwarded token.
+	if conf.AuthType == oauthPassThruAuthentication || conf.OAuthPassThru {
+		return &CloudTraceDatasource{
+			oauthPassThrough: true,
+			universeDomain:   conf.UniverseDomain,
+		}, nil
+	}
+
 	var client_err error
 	var client *cloudtrace.Client
 
@@ -112,22 +125,22 @@ func NewCloudTraceDatasource(ctx context.Context, settings backend.DataSourceIns
 			return nil, fmt.Errorf("create credentials: %w", err)
 		}
 		if conf.UsingImpersonation {
-			client, client_err = cloudtrace.NewClientWithImpersonation(context.TODO(), serviceAccount, conf.ServiceAccountToImpersonate)
+			client, client_err = cloudtrace.NewClientWithImpersonation(context.TODO(), serviceAccount, conf.ServiceAccountToImpersonate, conf.UniverseDomain)
 		} else {
-			client, client_err = cloudtrace.NewClient(context.TODO(), serviceAccount)
+			client, client_err = cloudtrace.NewClient(context.TODO(), serviceAccount, conf.UniverseDomain)
 		}
 	case gceAuthentication:
 		if conf.UsingImpersonation {
-			client, client_err = cloudtrace.NewClientWithImpersonation(context.TODO(), nil, conf.ServiceAccountToImpersonate)
+			client, client_err = cloudtrace.NewClientWithImpersonation(context.TODO(), nil, conf.ServiceAccountToImpersonate, conf.UniverseDomain)
 		} else {
-			client, client_err = cloudtrace.NewClientWithGCE(context.TODO())
+			client, client_err = cloudtrace.NewClientWithGCE(context.TODO(), conf.UniverseDomain)
 		}
 	case accessTokenAuthentication:
 		accessToken, ok := settings.DecryptedSecureJSONData[accessTokenKey]
 		if !ok || accessToken == "" {
 			return nil, errMissingAccessToken
 		}
-		client, client_err = cloudtrace.NewClientWithAccessToken(context.TODO(), accessToken)
+		client, client_err = cloudtrace.NewClientWithAccessToken(context.TODO(), accessToken, conf.UniverseDomain)
 	default:
 		return nil, fmt.Errorf("unknown authentication type: %s", conf.AuthType)
 	}
@@ -137,22 +150,27 @@ func NewCloudTraceDatasource(ctx context.Context, settings backend.DataSourceIns
 	}
 
 	return &CloudTraceDatasource{
-		client: client,
+		client:         client,
+		universeDomain: conf.UniverseDomain,
 	}, nil
 }
 
 // CloudTraceDatasource is an example datasource which can respond to data queries, reports
 // its health and has streaming skills.
 type CloudTraceDatasource struct {
-	client cloudtrace.API
+	client           cloudtrace.API
+	oauthPassThrough bool
+	universeDomain   string
 }
 
 // Dispose here tells plugin SDK that plugin wants to clean up resources when a new instance
 // created. As soon as datasource settings change detected by SDK old datasource instance will
 // be disposed and a new one will be created using NewSampleDatasource factory function.
 func (d *CloudTraceDatasource) Dispose() {
-	if err := d.client.Close(); err != nil {
-		log.DefaultLogger.Error("failed closing client", "error", err)
+	if d.client != nil {
+		if err := d.client.Close(); err != nil {
+			log.DefaultLogger.Error("failed closing client", "error", err)
+		}
 	}
 }
 
@@ -161,6 +179,27 @@ func (d *CloudTraceDatasource) Dispose() {
 // Currently only projects are fetched, other requests receive a 404
 func (d *CloudTraceDatasource) CallResource(ctx context.Context, req *backend.CallResourceRequest, sender backend.CallResourceResponseSender) error {
 	// log.DefaultLogger.Info("CallResource called")
+
+	client := d.client
+
+	if d.oauthPassThrough {
+		headers := make(map[string]string)
+		for k, v := range req.Headers {
+			if strings.EqualFold(k, "Authorization") {
+				headers["Authorization"] = v[0]
+				break
+			}
+		}
+		oauthClient, err := d.CreateOauthClient(ctx, headers)
+		if err != nil {
+			return sender.Send(&backend.CallResourceResponse{
+				Status: http.StatusBadGateway,
+				Body:   []byte(sanitizeErrorMessage(err)),
+			})
+		}
+		client = oauthClient
+		defer client.Close()
+	}
 
 	var body []byte
 
@@ -171,6 +210,10 @@ func (d *CloudTraceDatasource) CallResource(ctx context.Context, req *backend.Ca
 		proj, err := utils.GCEDefaultProject(ctx, "")
 		if err != nil {
 			log.DefaultLogger.Warn("problem getting GCE default project", "error", err)
+			return sender.Send(&backend.CallResourceResponse{
+				Status: http.StatusBadGateway,
+				Body:   []byte(sanitizeErrorMessage(err)),
+			})
 		}
 		body, err = json.Marshal(proj)
 		if err != nil {
@@ -185,9 +228,13 @@ func (d *CloudTraceDatasource) CallResource(ctx context.Context, req *backend.Ca
 			Body:   []byte(`No such path`),
 		})
 	} else {
-		projects, err := d.client.ListProjects(ctx)
+		projects, err := client.ListProjects(ctx)
 		if err != nil {
 			log.DefaultLogger.Warn("problem listing projects", "error", err)
+			return sender.Send(&backend.CallResourceResponse{
+				Status: http.StatusBadGateway,
+				Body:   []byte(sanitizeErrorMessage(err)),
+			})
 		}
 
 		body, err = json.Marshal(projects)
@@ -211,13 +258,29 @@ func (d *CloudTraceDatasource) CallResource(ctx context.Context, req *backend.Ca
 // contains Frames ([]*Frame).
 func (d *CloudTraceDatasource) QueryData(ctx context.Context, req *backend.QueryDataRequest) (*backend.QueryDataResponse, error) {
 	// log.DefaultLogger.Info("QueryData called")
+	client := d.client
+
+	if d.oauthPassThrough {
+		oauthClient, err := d.CreateOauthClient(ctx, req.Headers)
+		if err != nil {
+			response := backend.NewQueryDataResponse()
+			for _, q := range req.Queries {
+				response.Responses[q.RefID] = backend.DataResponse{
+					Error: fmt.Errorf("%s", sanitizeErrorMessage(err)),
+				}
+			}
+			return response, nil
+		}
+		client = oauthClient
+		defer client.Close()
+	}
 
 	// create response struct
 	response := backend.NewQueryDataResponse()
 
 	// loop over queries and execute them individually.
 	for _, q := range req.Queries {
-		res := d.query(ctx, req.PluginContext, q)
+		res := d.query(ctx, req.PluginContext, q, client)
 
 		// save the response in a hashmap
 		// based on with RefID as identifier
@@ -236,7 +299,7 @@ type queryModel struct {
 	MaxDataPoints int    `json:"MaxDataPoints"`
 }
 
-func (d *CloudTraceDatasource) query(ctx context.Context, pCtx backend.PluginContext, query backend.DataQuery) backend.DataResponse {
+func (d *CloudTraceDatasource) query(ctx context.Context, pCtx backend.PluginContext, query backend.DataQuery, client cloudtrace.API) backend.DataResponse {
 	response := backend.DataResponse{}
 
 	var q queryModel
@@ -246,9 +309,9 @@ func (d *CloudTraceDatasource) query(ctx context.Context, pCtx backend.PluginCon
 	}
 
 	if q.QueryType == "traceID" && strings.TrimSpace(q.TraceID) != "" {
-		f, err := d.getTraceSpanFrame(ctx, q)
+		f, err := d.getTraceSpanFrame(ctx, q, client)
 		if err != nil {
-			response.Error = fmt.Errorf("trace query: %w", err)
+			response.Error = fmt.Errorf("trace query: %s", sanitizeErrorMessage(err))
 			return response
 		}
 
@@ -256,9 +319,9 @@ func (d *CloudTraceDatasource) query(ctx context.Context, pCtx backend.PluginCon
 	}
 
 	if q.QueryType == "" {
-		f, err := d.getTracesTableFrame(ctx, q, query)
+		f, err := d.getTracesTableFrame(ctx, q, query, client)
 		if err != nil {
-			response.Error = fmt.Errorf("filter query: %w", err)
+			response.Error = fmt.Errorf("filter query: %s", sanitizeErrorMessage(err))
 			return response
 		}
 
@@ -268,13 +331,13 @@ func (d *CloudTraceDatasource) query(ctx context.Context, pCtx backend.PluginCon
 	return response
 }
 
-func (d *CloudTraceDatasource) getTraceSpanFrame(ctx context.Context, q queryModel) (*data.Frame, error) {
+func (d *CloudTraceDatasource) getTraceSpanFrame(ctx context.Context, q queryModel, client cloudtrace.API) (*data.Frame, error) {
 	clientRequest := cloudtrace.TraceQuery{
 		ProjectID: q.ProjectID,
 		TraceID:   q.TraceID,
 	}
 
-	trace, err := d.client.GetTrace(ctx, &clientRequest)
+	trace, err := client.GetTrace(ctx, &clientRequest)
 	if err != nil {
 		return nil, err
 	}
@@ -336,7 +399,7 @@ func createTraceSpanFrame(trace *tracepb.Trace) *data.Frame {
 	return f
 }
 
-func (d *CloudTraceDatasource) getTracesTableFrame(ctx context.Context, q queryModel, dQuery backend.DataQuery) (*data.Frame, error) {
+func (d *CloudTraceDatasource) getTracesTableFrame(ctx context.Context, q queryModel, dQuery backend.DataQuery, client cloudtrace.API) (*data.Frame, error) {
 	filter, err := cloudtrace.GetListTracesFilter(q.QueryText)
 	if err != nil {
 		return nil, err
@@ -352,7 +415,7 @@ func (d *CloudTraceDatasource) getTracesTableFrame(ctx context.Context, q queryM
 		},
 	}
 
-	traces, err := d.client.ListTraces(ctx, &clientRequest)
+	traces, err := client.ListTraces(ctx, &clientRequest)
 	if err != nil {
 		return nil, err
 	}
@@ -411,24 +474,50 @@ func createTracesTableFrame(traces []*tracepb.Trace) *data.Frame {
 func (d *CloudTraceDatasource) CheckHealth(ctx context.Context, req *backend.CheckHealthRequest) (*backend.CheckHealthResult, error) {
 	// log.DefaultLogger.Info("CheckHealth called")
 
+	client := d.client
+
+	if d.oauthPassThrough {
+		oauthClient, err := d.CreateOauthClient(ctx, req.Headers)
+		if err != nil {
+			return &backend.CheckHealthResult{
+				Status:  backend.HealthStatusError,
+				Message: sanitizeErrorMessage(err),
+			}, nil
+		}
+		client = oauthClient
+		defer client.Close()
+	}
+
 	var status = backend.HealthStatusOk
 	settings := req.PluginContext.DataSourceInstanceSettings
 
 	var conf config
 	if err := json.Unmarshal(settings.JSONData, &conf); err != nil {
-		return nil, fmt.Errorf("unmarshal: %w", err)
+		return &backend.CheckHealthResult{
+			Status:  backend.HealthStatusError,
+			Message: fmt.Sprintf("failed to parse configuration: %s", sanitizeErrorMessage(err)),
+		}, nil
 	}
 	if conf.DefaultProject == "" && conf.AuthType == gceAuthentication {
 		proj, err := utils.GCEDefaultProject(ctx, "")
 		if err != nil {
-			return nil, fmt.Errorf("failed to get GCE default project: %w", err)
+			return &backend.CheckHealthResult{
+				Status:  backend.HealthStatusError,
+				Message: fmt.Sprintf("failed to get GCE default project: %s", sanitizeErrorMessage(err)),
+			}, nil
 		}
 		conf.DefaultProject = proj
 	}
-	if err := d.client.TestConnection(ctx, conf.DefaultProject); err != nil {
+	if conf.DefaultProject == "" && conf.OAuthPassThru {
 		return &backend.CheckHealthResult{
 			Status:  backend.HealthStatusError,
-			Message: fmt.Sprintf("failed to run test query: %s", err),
+			Message: "Please define a default project for OAuth authentication",
+		}, nil
+	}
+	if err := client.TestConnection(ctx, conf.DefaultProject); err != nil {
+		return &backend.CheckHealthResult{
+			Status:  backend.HealthStatusError,
+			Message: fmt.Sprintf("failed to run test query: %s", sanitizeErrorMessage(err)),
 		}, nil
 	}
 
@@ -436,4 +525,31 @@ func (d *CloudTraceDatasource) CheckHealth(ctx context.Context, req *backend.Che
 		Status:  status,
 		Message: fmt.Sprintf("Successfully queried traces from GCP project %s", conf.DefaultProject),
 	}, nil
+}
+
+// htmlLikePattern matches error strings that contain HTML responses. It targets
+// specific HTML signatures to avoid false positives from Go error messages that
+// contain angle-bracket notation (e.g. <nil> from ASN.1/x509 parsing).
+var htmlLikePattern = regexp.MustCompile(`(?i)<html[\s>]|<!doctype\s+html|text/html`)
+
+// sanitizeErrorMessage cleans up raw error messages that may contain HTML
+// (e.g. from an incorrect universe domain returning a 502 HTML page). It
+// handles both the case where the full HTML page is embedded in the error and
+// the case where only the content-type is mentioned (gRPC transport errors).
+func sanitizeErrorMessage(err error) string {
+	msg := err.Error()
+	if !htmlLikePattern.MatchString(msg) {
+		return msg
+	}
+	return "The server returned an HTML error page instead of a valid API response. " +
+		"If you have configured a Universe Domain, please verify it is correct."
+}
+
+func (d *CloudTraceDatasource) CreateOauthClient(ctx context.Context, headers map[string]string) (*cloudtrace.Client, error) {
+	client, err := cloudtrace.NewClientWithPassThrough(ctx, headers, d.universeDomain)
+	if err != nil {
+		return nil, fmt.Errorf("create oauth client: %s", sanitizeErrorMessage(err))
+	}
+
+	return client, nil
 }

@@ -310,3 +310,34 @@ func TestQueryData_SingleTraceTable(t *testing.T) {
 	require.Equal(t, string(expectedFrame), string(serializedFrame))
 	client.AssertExpectations(t)
 }
+
+func TestSanitizeErrorMessage_PlainError(t *testing.T) {
+	err := errors.New("connection refused")
+	require.Equal(t, "connection refused", sanitizeErrorMessage(err))
+}
+
+func TestSanitizeErrorMessage_HTMLPage(t *testing.T) {
+	err := errors.New(`<html><body><h1>502 Bad Gateway</h1></body></html>`)
+	result := sanitizeErrorMessage(err)
+	require.Contains(t, result, "HTML error page")
+	require.NotContains(t, result, "<html>")
+}
+
+func TestSanitizeErrorMessage_DoctypeHTML(t *testing.T) {
+	err := errors.New(`<!DOCTYPE html><html><body>Error</body></html>`)
+	result := sanitizeErrorMessage(err)
+	require.Contains(t, result, "HTML error page")
+}
+
+func TestSanitizeErrorMessage_ContentTypeHTML(t *testing.T) {
+	err := errors.New(`received unexpected content-type: text/html`)
+	result := sanitizeErrorMessage(err)
+	require.Contains(t, result, "HTML error page")
+}
+
+func TestSanitizeErrorMessage_GoAngleBrackets(t *testing.T) {
+	// Go errors containing <nil> should NOT be treated as HTML
+	err := errors.New("x509: cannot parse <nil> as ASN.1")
+	result := sanitizeErrorMessage(err)
+	require.Equal(t, "x509: cannot parse <nil> as ASN.1", result)
+}

@@ -18,8 +18,8 @@ import { DataSourcePlugin } from '@grafana/data';
 import { DataSource } from './datasource';
 import { ConfigEditor } from './ConfigEditor';
 import { CloudTraceQueryEditor } from './QueryEditor';
-import { CloudTraceOptions, Query } from './types';
+import { CloudTraceOptions, DataSourceSecureJsonData, Query } from './types';
 
-export const plugin = new DataSourcePlugin<DataSource, Query, CloudTraceOptions>(DataSource)
+export const plugin = new DataSourcePlugin<DataSource, Query, CloudTraceOptions, DataSourceSecureJsonData>(DataSource)
   .setConfigEditor(ConfigEditor)
   .setQueryEditor(CloudTraceQueryEditor);

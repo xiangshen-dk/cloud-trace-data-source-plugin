@@ -19,13 +19,15 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	trace "cloud.google.com/go/trace/apiv1"
 	"cloud.google.com/go/trace/apiv1/tracepb"
+	resourcemanager "cloud.google.com/go/resourcemanager/apiv3"
+	resourcemanagerpb "cloud.google.com/go/resourcemanager/apiv3/resourcemanagerpb"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/log"
 	"golang.org/x/oauth2"
-	resourcemanager "google.golang.org/api/cloudresourcemanager/v1"
 	"google.golang.org/api/impersonate"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
@@ -50,112 +52,166 @@ type API interface {
 	Close() error
 }
 
-// Client wraps a GCP trace client to fetch traces and spance,
+// Client wraps a GCP trace client to fetch traces and spans,
 // and a resourcemanager client to list projects
 type Client struct {
 	tClient *trace.Client
-	rClient *resourcemanager.ProjectsService
+	rClient *resourcemanager.ProjectsClient
+}
+
+func universeDomainOpts(universeDomain string) []option.ClientOption {
+	if universeDomain == "" {
+		return nil
+	}
+	return []option.ClientOption{option.WithUniverseDomain(universeDomain)}
 }
 
 // NewClient creates a new Client using jsonCreds for authentication
-func NewClient(ctx context.Context, jsonCreds []byte) (*Client, error) {
-	client, err := trace.NewClient(ctx, option.WithCredentialsJSON(jsonCreds),
-		option.WithUserAgent("googlecloud-trace-datasource"))
-	if err != nil {
-		return nil, err
-	}
-	rClient, err := resourcemanager.NewService(ctx, option.WithCredentialsJSON(jsonCreds),
-		option.WithUserAgent("googlecloud-trace-datasource"))
-	if err != nil {
-		return nil, err
-	}
+func NewClient(ctx context.Context, jsonCreds []byte, universeDomain string) (*Client, error) {
+	opts := append([]option.ClientOption{
+		option.WithCredentialsJSON(jsonCreds),
+		option.WithUserAgent("googlecloud-trace-datasource"),
+	}, universeDomainOpts(universeDomain)...)
 
-	return &Client{
-		tClient: client,
-		rClient: rClient.Projects,
-	}, nil
-}
-
-// NewClient creates a new Client using GCE metadata for authentication
-func NewClientWithGCE(ctx context.Context) (*Client, error) {
-	client, err := trace.NewClient(ctx,
-		option.WithUserAgent("googlecloud-trace-datasource"))
+	client, err := trace.NewClient(ctx, opts...)
 	if err != nil {
 		return nil, err
 	}
-	rClient, err := resourcemanager.NewService(ctx,
-		option.WithUserAgent("googlecloud-trace-datasource"))
+	rClient, err := resourcemanager.NewProjectsClient(ctx, opts...)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Client{
 		tClient: client,
-		rClient: rClient.Projects,
+		rClient: rClient,
 	}, nil
 }
 
-// NewClient creates a new Clients using service account impersonation
-func NewClientWithImpersonation(ctx context.Context, jsonCreds []byte, impersonateSA string) (*Client, error) {
+// NewClientWithGCE creates a new Client using GCE metadata for authentication
+func NewClientWithGCE(ctx context.Context, universeDomain string) (*Client, error) {
+	opts := append([]option.ClientOption{
+		option.WithUserAgent("googlecloud-trace-datasource"),
+	}, universeDomainOpts(universeDomain)...)
+
+	client, err := trace.NewClient(ctx, opts...)
+	if err != nil {
+		return nil, err
+	}
+	rClient, err := resourcemanager.NewProjectsClient(ctx, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Client{
+		tClient: client,
+		rClient: rClient,
+	}, nil
+}
+
+// NewClientWithImpersonation creates a new Client using service account impersonation
+func NewClientWithImpersonation(ctx context.Context, jsonCreds []byte, impersonateSA string, universeDomain string) (*Client, error) {
 	var ts oauth2.TokenSource
 	var err error
+
+	impersonateOpts := append([]option.ClientOption{}, universeDomainOpts(universeDomain)...)
+
 	if jsonCreds == nil {
 		ts, err = impersonate.CredentialsTokenSource(ctx, impersonate.CredentialsConfig{
 			TargetPrincipal: impersonateSA,
 			Scopes:          []string{"https://www.googleapis.com/auth/cloud-platform"},
-		})
+		}, impersonateOpts...)
 	} else {
+		impersonateOpts = append(impersonateOpts, option.WithCredentialsJSON(jsonCreds))
 		ts, err = impersonate.CredentialsTokenSource(ctx, impersonate.CredentialsConfig{
 			TargetPrincipal: impersonateSA,
 			Scopes:          []string{"https://www.googleapis.com/auth/cloud-platform"},
-		}, option.WithCredentialsJSON(jsonCreds))
+		}, impersonateOpts...)
 	}
 	if err != nil {
 		return nil, err
 	}
 
-	client, err := trace.NewClient(ctx, option.WithTokenSource(ts),
-		option.WithUserAgent("googlecloud-trace-datasource"))
+	opts := append([]option.ClientOption{
+		option.WithTokenSource(ts),
+		option.WithUserAgent("googlecloud-trace-datasource"),
+	}, universeDomainOpts(universeDomain)...)
+
+	client, err := trace.NewClient(ctx, opts...)
 	if err != nil {
 		return nil, err
 	}
-	rClient, err := resourcemanager.NewService(ctx, option.WithTokenSource(ts),
-		option.WithUserAgent("googlecloud-trace-datasource"))
+	rClient, err := resourcemanager.NewProjectsClient(ctx, opts...)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Client{
 		tClient: client,
-		rClient: rClient.Projects,
+		rClient: rClient,
 	}, nil
 }
 
 // NewClientWithAccessToken creates a new Client using an access token for authentication.
 // Since the datasource is re-created whenever the token changes, we can treat this token as static.
-func NewClientWithAccessToken(ctx context.Context, accessToken string) (*Client, error) {
+func NewClientWithAccessToken(ctx context.Context, accessToken string, universeDomain string) (*Client, error) {
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: accessToken})
 
-	client, err := trace.NewClient(ctx, option.WithTokenSource(ts),
-		option.WithUserAgent("googlecloud-trace-datasource"))
+	opts := append([]option.ClientOption{
+		option.WithTokenSource(ts),
+		option.WithUserAgent("googlecloud-trace-datasource"),
+	}, universeDomainOpts(universeDomain)...)
+
+	client, err := trace.NewClient(ctx, opts...)
 	if err != nil {
 		return nil, err
 	}
 
-	rClient, err := resourcemanager.NewService(ctx, option.WithTokenSource(ts),
-		option.WithUserAgent("googlecloud-trace-datasource"))
+	rClient, err := resourcemanager.NewProjectsClient(ctx, opts...)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Client{
 		tClient: client,
-		rClient: rClient.Projects,
+		rClient: rClient,
+	}, nil
+}
+
+// NewClientWithPassThrough creates a new Client using OAuth browser credentials
+func NewClientWithPassThrough(ctx context.Context, headers map[string]string, universeDomain string) (*Client, error) {
+	token, found := strings.CutPrefix(headers["Authorization"], "Bearer ")
+	if !found || token == "" {
+		return nil, errors.New("missing or invalid Authorization header")
+	}
+
+	opts := append([]option.ClientOption{
+		option.WithTokenSource(
+			oauth2.StaticTokenSource(&oauth2.Token{
+				AccessToken: token,
+			}),
+		),
+		option.WithUserAgent("googlecloud-trace-datasource"),
+	}, universeDomainOpts(universeDomain)...)
+
+	client, err := trace.NewClient(ctx, opts...)
+	if err != nil {
+		return nil, err
+	}
+	rClient, err := resourcemanager.NewProjectsClient(ctx, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Client{
+		tClient: client,
+		rClient: rClient,
 	}, nil
 }
 
 // Close closes the underlying connection to the GCP API
 func (c *Client) Close() error {
+	c.rClient.Close()
 	return c.tClient.Close()
 }
 
@@ -175,17 +231,21 @@ type TraceQuery struct {
 
 // ListProjects returns the project IDs of all visible projects
 func (c *Client) ListProjects(ctx context.Context) ([]string, error) {
-	response, err := c.rClient.List().Do()
-	if err != nil {
-		return nil, err
-	}
-
 	projectIDs := []string{}
-	for _, p := range response.Projects {
-		if p.LifecycleState == "DELETE_REQUESTED" || p.LifecycleState == "DELETE_IN_PROGRESS" {
+	req := &resourcemanagerpb.SearchProjectsRequest{}
+	it := c.rClient.SearchProjects(ctx, req)
+	for {
+		project, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if project.State != resourcemanagerpb.Project_ACTIVE {
 			continue
 		}
-		projectIDs = append(projectIDs, p.ProjectId)
+		projectIDs = append(projectIDs, project.ProjectId)
 	}
 	return projectIDs, nil
 }

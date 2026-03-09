@@ -24,6 +24,7 @@ import { CloudTraceVariableSupport } from './variables';
 
 export class DataSource extends DataSourceWithBackend<Query, CloudTraceOptions> {
   authenticationType: string;
+  annotations = {};
 
   constructor(
     private instanceSettings: DataSourceInstanceSettings<CloudTraceOptions>,
@@ -32,6 +33,30 @@ export class DataSource extends DataSourceWithBackend<Query, CloudTraceOptions> 
     super(instanceSettings);
     this.authenticationType = instanceSettings.jsonData.authenticationType || 'jwt';
     this.variables = new CloudTraceVariableSupport(this);
+  }
+
+  /**
+   * Override testDatasource to sanitize errors that may contain raw HTML.
+   * When Grafana returns HTTP 502 for health checks, the GCP Load Balancer
+   * intercepts it and replaces the body with its own HTML 502 page. This
+   * override catches those errors and returns a readable message instead.
+   */
+  async testDatasource() {
+    try {
+      return await super.testDatasource();
+    } catch (err: unknown) {
+      const errObj = err as Record<string, unknown>;
+      // Grafana's backendSrv puts the HTTP response body in err.data
+      const raw = errObj?.['data'] ?? errObj?.['message'] ?? String(err);
+      const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
+      const isHtml = /<html[\s>]|<!doctype\s+html/i.test(text) || text.includes('text/html');
+      return {
+        status: 'error' as const,
+        message: isHtml
+          ? 'The server returned an HTML error page. If you set a Universe Domain, please verify it is correct.'
+          : text,
+      };
+    }
   }
 
   /**
@@ -71,11 +96,19 @@ export class DataSource extends DataSourceWithBackend<Query, CloudTraceOptions> 
   }
 
   applyTemplateVariables(query: Query, scopedVars: ScopedVars): Query {
+    let normalizedQuery = { ...query };
+
+    // Handle Grafana's standard "Query with traces" format
+    if (query.queryType === 'traceql' && (query as any).query) {
+      normalizedQuery.queryType = 'traceID';
+      normalizedQuery.traceId = (query as any).query;
+    }
+
     return {
-      ...query,
-      queryText: this.templateSrv.replace(query.queryText, scopedVars),
-      projectId: this.templateSrv.replace(query.projectId, scopedVars),
-      traceId: this.templateSrv.replace(query.traceId, scopedVars),
+      ...normalizedQuery,
+      queryText: this.templateSrv.replace(normalizedQuery.queryText, scopedVars),
+      projectId: this.templateSrv.replace(normalizedQuery.projectId, scopedVars),
+      traceId: this.templateSrv.replace(normalizedQuery.traceId || '', scopedVars),
     };
   }
 
@@ -109,6 +142,20 @@ export class DataSource extends DataSourceWithBackend<Query, CloudTraceOptions> 
         };
       })
     );
+  }
+
+  /**
+   * Provides Grafana with the correct query shape for trace ID lookups.
+   * This is called when the user clicks "Query with traces" from exemplars,
+   * ensuring the query is constructed with the correct queryType and traceId
+   * fields that this datasource expects.
+   */
+  getTraceQuery(traceId: string): Partial<Query> {
+    return {
+      queryType: 'traceID',
+      traceId: traceId,
+      projectId: '',
+    };
   }
 
   /**

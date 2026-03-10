@@ -46,7 +46,7 @@ If you host Grafana on a GCE VM, you can use the [Compute Engine service account
 
 #### Access Token
 
-Similar to [Prometheus data sources on Google Cloud](https://cloud.google.com/stackdriver/docs/managed-prometheus/query#use-serverless), you can configure a scheduled job to use an OAuth2 access token to view the traces. Please follow the steps in the [data source syncer README](https://github.com/GoogleCloudPlatform/blob/main/datasource-syncer/README.md) to configure it.
+Similar to [Prometheus data sources on Google Cloud](https://cloud.google.com/stackdriver/docs/managed-prometheus/query#use-serverless), you can configure a scheduled job to use an OAuth2 access token to view the traces. Please follow the steps in the [data source syncer README](https://github.com/GoogleCloudPlatform/cloud-trace-data-source-plugin/blob/main/datasource-syncer/README.md) to configure it.
 
 #### OAuth Passthrough
 

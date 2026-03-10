@@ -9,12 +9,21 @@ jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
+      id-token: write
       contents: write
+      attestations: write
       actions: write
     env:
       GRAFANA_ACCESS_POLICY_TOKEN: ${{ secrets.GRAFANA_ACCESS_POLICY_TOKEN }} # Requires a Grafana policy token from Grafana.com.
     steps:
       - uses: actions/checkout@v4
+
+      - uses: grafana/plugin-actions/build-plugin@main
+        with:
+          # refer to https://grafana.com/developers/plugin-tools/publish-a-plugin/sign-a-plugin#generate-an-access-policy-token to generate it
+          # save the value in your repository secrets
+          policy_token: ${{ secrets.GRAFANA_ACCESS_POLICY_TOKEN }}
+          attestation: true
 
       - name: Setup Node.js environment
         uses: actions/setup-node@v4

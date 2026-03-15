@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-import React, { KeyboardEvent, useEffect, useMemo, useState } from 'react';
+import React, { KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { QueryEditorProps, SelectableValue } from '@grafana/data';
-import { InlineField, InlineFieldRow, Input, LinkButton, RadioButtonGroup, Select, TextArea, Tooltip } from '@grafana/ui';
+import { Alert, InlineField, InlineFieldRow, AsyncSelect, Input, LinkButton, RadioButtonGroup, TextArea, Tooltip } from '@grafana/ui';
 import { DataSource } from './datasource';
 import { CloudTraceOptions, defaultQuery, Query } from './types';
 
@@ -42,6 +42,7 @@ export function CloudTraceQueryEditor({ datasource, query, range, onChange, onRu
   };
 
   const [fetchError, setFetchError] = useState<string | undefined>();
+  const requestIdRef = useRef(0);
 
   /**
    * Sanitize fetch errors — Grafana's backendSrv may include raw HTML bodies
@@ -57,25 +58,49 @@ export function CloudTraceQueryEditor({ datasource, query, range, onChange, onRu
     return text;
   };
 
-  const [projects, setProjects] = useState<Array<SelectableValue<string>>>();
-  useEffect(() => {
-    datasource.getProjects().then(res => {
-      setProjects(res.map(project => ({
+  const loadProjects = useCallback((inputValue: string): Promise<Array<SelectableValue<string>>> => {
+    const thisRequestId = ++requestIdRef.current;
+    return datasource.getProjects(inputValue || undefined).then(res => {
+      if (thisRequestId === requestIdRef.current) {
+        setFetchError(undefined);
+      }
+      return res.map(project => ({
         label: project,
         value: project,
-      })));
-      setFetchError(undefined);
-    }).catch(err => setFetchError(sanitizeFetchError(err)));
+      }));
+    }).catch(err => {
+      if (thisRequestId === requestIdRef.current) {
+        setFetchError(sanitizeFetchError(err));
+      }
+      return [];
+    });
   }, [datasource]);
 
 
-  // Apply defaults if needed
-  if (!query.projectId) {
-    datasource.getDefaultProject().then(r => query.projectId = r);
-  }
-  if (query.queryText == null) {
-    query.queryText = defaultQuery.queryText;
-  }
+  // Apply defaults if needed — use onChange so they are persisted in the panel config
+  useEffect(() => {
+    const needsQueryText = query.queryText == null && defaultQuery.queryText;
+    const needsProjectId = !query.projectId;
+
+    if (!needsQueryText && !needsProjectId) {
+      return;
+    }
+
+    if (needsProjectId) {
+      datasource.getDefaultProject().then((project) => {
+        const nextQuery = { ...query };
+        if (needsQueryText) {
+          nextQuery.queryText = defaultQuery.queryText;
+        }
+        if (project) {
+          nextQuery.projectId = project;
+        }
+        onChange(nextQuery);
+      });
+    } else if (needsQueryText) {
+      onChange({ ...query, queryText: defaultQuery.queryText });
+    }
+  }, [query, datasource, onChange]);
 
   /**
    * Keep an up-to-date URI that links to the equivalent query in the GCP console
@@ -197,7 +222,7 @@ export function CloudTraceQueryEditor({ datasource, query, range, onChange, onRu
     <>
       <InlineFieldRow>
         <InlineField label='Project ID'>
-          <Select
+          <AsyncSelect
             width={30}
             allowCustomValue
             formatCreateLabel={(v) => `Use project: ${v}`}
@@ -207,8 +232,9 @@ export function CloudTraceQueryEditor({ datasource, query, range, onChange, onRu
               projectId: e.value!,
               refId: query.refId,
             })}
-            options={projects}
-            value={query.projectId}
+            loadOptions={loadProjects}
+            defaultOptions
+            value={query.projectId ? { label: query.projectId, value: query.projectId } : undefined}
             placeholder="Select Project"
             inputId={`${query.refId}-project`}
           />
@@ -233,9 +259,7 @@ export function CloudTraceQueryEditor({ datasource, query, range, onChange, onRu
         </InlineField>
       </InlineFieldRow>
       {fetchError && (
-        <div style={{ color: 'rgb(224, 93, 93)', marginBottom: '8px', padding: '8px', border: '1px solid rgb(224, 93, 93)', borderRadius: '4px', background: 'rgba(224, 93, 93, 0.1)' }}>
-          ⚠️ {fetchError}
-        </div>
+        <Alert severity="error" title={fetchError} />
       )}
       {renderExploreBody()}
       <Tooltip content='Click to view these results in the Google Cloud console'>

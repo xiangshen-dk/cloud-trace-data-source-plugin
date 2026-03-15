@@ -16,6 +16,7 @@ package plugin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -341,3 +342,68 @@ func TestSanitizeErrorMessage_GoAngleBrackets(t *testing.T) {
 	result := sanitizeErrorMessage(err)
 	require.Equal(t, "x509: cannot parse <nil> as ASN.1", result)
 }
+
+// responseSender is a test helper that captures the CallResource response
+type responseSender struct {
+	resp *backend.CallResourceResponse
+}
+
+func (s *responseSender) Send(resp *backend.CallResourceResponse) error {
+	s.resp = resp
+	return nil
+}
+
+func TestCallResource_Projects(t *testing.T) {
+	expectedProjects := []string{"project-a", "project-b", "project-c"}
+
+	client := mocks.NewAPI(t)
+	client.On("ListProjects", mock.Anything, "").Return(expectedProjects, nil)
+
+	ds := &CloudTraceDatasource{
+		client: client,
+	}
+
+	sender := &responseSender{}
+	err := ds.CallResource(context.Background(), &backend.CallResourceRequest{
+		Path: "projects",
+		URL:  "projects",
+	}, sender)
+
+	require.NoError(t, err)
+	require.NotNil(t, sender.resp)
+	require.Equal(t, 200, sender.resp.Status)
+
+	var projects []string
+	err = json.Unmarshal(sender.resp.Body, &projects)
+	require.NoError(t, err)
+	require.Equal(t, expectedProjects, projects)
+	client.AssertExpectations(t)
+}
+
+func TestCallResource_ProjectsWithQuery(t *testing.T) {
+	expectedProjects := []string{"proj-a"}
+
+	client := mocks.NewAPI(t)
+	client.On("ListProjects", mock.Anything, "proj-a").Return(expectedProjects, nil)
+
+	ds := &CloudTraceDatasource{
+		client: client,
+	}
+
+	sender := &responseSender{}
+	err := ds.CallResource(context.Background(), &backend.CallResourceRequest{
+		Path: "projects",
+		URL:  "projects?query=proj-a",
+	}, sender)
+
+	require.NoError(t, err)
+	require.NotNil(t, sender.resp)
+	require.Equal(t, 200, sender.resp.Status)
+
+	var projects []string
+	err = json.Unmarshal(sender.resp.Body, &projects)
+	require.NoError(t, err)
+	require.Equal(t, expectedProjects, projects)
+	client.AssertExpectations(t)
+}
+

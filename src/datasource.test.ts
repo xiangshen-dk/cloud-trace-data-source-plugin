@@ -72,6 +72,42 @@ describe('Google Cloud Trace Data Source', () => {
             };
             expect(ds.filterQuery(query)).toBe(false);
         });
+        it('returns false for traceID query with empty traceId', () => {
+            const ds = makeDataSource();
+            const query = {
+                refId: '1',
+                projectId: '1',
+                queryType: 'traceID',
+                traceId: '   ',
+            };
+            expect(ds.filterQuery(query)).toBe(false);
+        });
+        it('returns true for traceID query with valid traceId', () => {
+            const ds = makeDataSource();
+            const query = {
+                refId: '1',
+                projectId: '1',
+                queryType: 'traceID',
+                traceId: 'abc123',
+            };
+            expect(ds.filterQuery(query)).toBe(true);
+        });
+        it('returns false for filter query without projectId', () => {
+            const ds = makeDataSource();
+            const query = {
+                refId: '1',
+                projectId: '',
+            };
+            expect(ds.filterQuery(query)).toBe(false);
+        });
+        it('returns true for filter query with projectId', () => {
+            const ds = makeDataSource();
+            const query = {
+                refId: '1',
+                projectId: 'my-project',
+            };
+            expect(ds.filterQuery(query)).toBe(true);
+        });
     });
 
     describe('addLinksToTraceIdColumn', () => {
@@ -91,6 +127,17 @@ describe('Google Cloud Trace Data Source', () => {
             const result = ds.addLinksToTraceIdColumn(frame, query);
             expect(result.length).toBe(1);
             expect(result[0]).toEqual(expectedFrame);
+        });
+        it('returns unmodified frame when Trace ID field is missing', () => {
+            const ds = makeDataSource();
+            const frame = {
+                name: 'traceTable',
+                fields: [{ name: 'Other Field', type: 'string' as any, config: {}, values: [] as any }],
+                length: 0,
+            };
+            const result = ds.addLinksToTraceIdColumn(frame, undefined);
+            expect(result.length).toBe(1);
+            expect(result[0]).toEqual(frame);
         });
     });
 

@@ -16,7 +16,7 @@
 
 import { DataSourcePluginOptionsEditorProps, SelectableValue } from '@grafana/data';
 import { ConnectionConfig, GoogleAuthType } from '@grafana/google-sdk';
-import { Field, Label, SecretInput, Select } from '@grafana/ui';
+import { Field, Input, Label, SecretInput, Select } from '@grafana/ui';
 import React, { PureComponent } from 'react';
 import { authTypes, CloudTraceOptions, DataSourceSecureJsonData } from './types';
 
@@ -106,8 +106,14 @@ export class ConfigEditor extends PureComponent<Props> {
                 id="serviceAccount"
                 value={this.state.sa}
                 onChange={(e) => {
-                  this.setState({ sa: e.target.value }, () => {
-                    this.props.options.jsonData.serviceAccountToImpersonate = this.state.sa;
+                  const newSa = e.target.value;
+                  this.setState({ sa: newSa });
+                  onOptionsChange({
+                    ...options,
+                    jsonData: {
+                      ...options.jsonData,
+                      serviceAccountToImpersonate: newSa,
+                    },
                   });
                 }}
               />
@@ -115,44 +121,40 @@ export class ConfigEditor extends PureComponent<Props> {
           </div>
         ) : null}
         {options.jsonData.authenticationType === ('accessToken' as GoogleAuthType) ? (
-          <div>
-            <div style={{ marginTop: '10px' }}>
-              <div className="gf-form-label__desc">
-                Alternatively, configure a temporary access token and a project ID. This will override other
-                authentication methods.
-              </div>
-              <div style={{ marginTop: '10px' }}>
-                <Label>Access Token</Label>
-                <SecretInput
-                  autoComplete="new-password"
-                  value={secureJsonData.accessToken || ''}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                    onOptionsChange({
-                      ...options,
-                      secureJsonData: {
-                        ...secureJsonData,
-                        accessToken: e.target.value,
-                      },
-                    });
-                  }}
-                  isConfigured={!!options.secureJsonFields?.accessToken}
-                  onReset={() => {
-                    onOptionsChange({
-                      ...options,
-                      secureJsonData: {
-                        ...secureJsonData,
-                        accessToken: '',
-                      },
-                      secureJsonFields: {
-                        ...options.secureJsonFields,
-                        accessToken: false,
-                      },
-                    });
-                  }}
-                />
-              </div>
-            </div>
-          </div>
+          <>
+            <Field
+              label="Access Token"
+              description="Alternatively, configure a temporary access token and a project ID. This will override other authentication methods."
+            >
+              <SecretInput
+                autoComplete="new-password"
+                value={secureJsonData.accessToken || ''}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                  onOptionsChange({
+                    ...options,
+                    secureJsonData: {
+                      ...secureJsonData,
+                      accessToken: e.target.value,
+                    },
+                  });
+                }}
+                isConfigured={!!options.secureJsonFields?.accessToken}
+                onReset={() => {
+                  onOptionsChange({
+                    ...options,
+                    secureJsonData: {
+                      ...secureJsonData,
+                      accessToken: '',
+                    },
+                    secureJsonFields: {
+                      ...options.secureJsonFields,
+                      accessToken: false,
+                    },
+                  });
+                }}
+              />
+            </Field>
+          </>
         ) : null}
         {defaultProject(this.props)}
       </>
@@ -164,9 +166,8 @@ const defaultProject = (props: Props) => {
   const { options, onOptionsChange } = props;
   return (
     <>
-      <div style={{ marginTop: '10px' }}>
-        <Label>Default Project ID (required for OAuth passthrough)</Label>
-        <input
+      <Field label="Default Project ID" description="Required for OAuth passthrough">
+        <Input
           autoComplete="off"
           value={options.jsonData.defaultProject || ''}
           onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
@@ -179,10 +180,9 @@ const defaultProject = (props: Props) => {
             });
           }}
         />
-      </div>
-      <div style={{ marginTop: '10px' }}>
-        <Label>Universe Domain (optional)</Label>
-        <input
+      </Field>
+      <Field label="Universe Domain" description="Optional">
+        <Input
           autoComplete="off"
           placeholder="googleapis.com (default)"
           value={options.jsonData.universeDomain || ''}
@@ -196,7 +196,7 @@ const defaultProject = (props: Props) => {
             });
           }}
         />
-      </div>
+      </Field>
     </>
   );
 };

@@ -91,13 +91,13 @@ func (_m *API) GetTrace(_a0 context.Context, _a1 *cloudtrace.TraceQuery) (*trace
 	return r0, r1
 }
 
-// ListProjects provides a mock function with given fields: _a0
-func (_m *API) ListProjects(_a0 context.Context) ([]string, error) {
-	ret := _m.Called(_a0)
+// ListProjects provides a mock function with given fields: _a0, query
+func (_m *API) ListProjects(_a0 context.Context, query string) ([]string, error) {
+	ret := _m.Called(_a0, query)
 
 	var r0 []string
-	if rf, ok := ret.Get(0).(func(context.Context) []string); ok {
-		r0 = rf(_a0)
+	if rf, ok := ret.Get(0).(func(context.Context, string) []string); ok {
+		r0 = rf(_a0, query)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).([]string)
@@ -105,8 +105,8 @@ func (_m *API) ListProjects(_a0 context.Context) ([]string, error) {
 	}
 
 	var r1 error
-	if rf, ok := ret.Get(1).(func(context.Context) error); ok {
-		r1 = rf(_a0)
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(_a0, query)
 	} else {
 		r1 = ret.Error(1)
 	}

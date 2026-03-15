@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -209,7 +210,7 @@ func (d *CloudTraceDatasource) CallResource(ctx context.Context, req *backend.Ca
 	if resource == "gceDefaultProject" {
 		proj, err := utils.GCEDefaultProject(ctx, "")
 		if err != nil {
-			log.DefaultLogger.Warn("problem getting GCE default project", "error", err)
+			log.DefaultLogger.Error("problem getting GCE default project", "error", err)
 			return sender.Send(&backend.CallResourceResponse{
 				Status: http.StatusBadGateway,
 				Body:   []byte(sanitizeErrorMessage(err)),
@@ -228,9 +229,18 @@ func (d *CloudTraceDatasource) CallResource(ctx context.Context, req *backend.Ca
 			Body:   []byte(`No such path`),
 		})
 	} else {
-		projects, err := client.ListProjects(ctx)
+		reqUrl, err := url.Parse(req.URL)
 		if err != nil {
-			log.DefaultLogger.Warn("problem listing projects", "error", err)
+			return sender.Send(&backend.CallResourceResponse{
+				Status: http.StatusBadRequest,
+				Body:   []byte(`Invalid request URL`),
+			})
+		}
+		searchQuery := reqUrl.Query().Get("query")
+
+		projects, err := client.ListProjects(ctx, searchQuery)
+		if err != nil {
+			log.DefaultLogger.Error("problem listing projects", "error", err)
 			return sender.Send(&backend.CallResourceResponse{
 				Status: http.StatusBadGateway,
 				Body:   []byte(sanitizeErrorMessage(err)),

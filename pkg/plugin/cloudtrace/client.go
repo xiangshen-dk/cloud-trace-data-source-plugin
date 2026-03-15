@@ -46,8 +46,9 @@ type API interface {
 	GetTrace(context.Context, *TraceQuery) (*cloudtracepb.Trace, error)
 	// TestConnection queries for any trace from the given project
 	TestConnection(ctx context.Context, projectID string) error
-	// ListProjects returns the project IDs of all visible projects
-	ListProjects(context.Context) ([]string, error)
+	// ListProjects returns the project IDs of all visible projects.
+	// If query is non-empty it is forwarded to the Resource Manager search filter.
+	ListProjects(ctx context.Context, query string) ([]string, error)
 	// Close closes the underlying connection to the GCP API
 	Close() error
 }
@@ -229,10 +230,18 @@ type TraceQuery struct {
 	TraceID   string
 }
 
-// ListProjects returns the project IDs of all visible projects
-func (c *Client) ListProjects(ctx context.Context) ([]string, error) {
+// ListProjects returns the project IDs of all visible projects.
+// If query is non-empty it is forwarded to the Resource Manager
+// SearchProjects API which supports free-text search (AIP-160).
+// Results are capped at maxProjects.
+const maxProjects = 100
+
+func (c *Client) ListProjects(ctx context.Context, query string) ([]string, error) {
 	projectIDs := []string{}
-	req := &resourcemanagerpb.SearchProjectsRequest{}
+	req := &resourcemanagerpb.SearchProjectsRequest{
+		Query:    query,
+		PageSize: maxProjects,
+	}
 	it := c.rClient.SearchProjects(ctx, req)
 	for {
 		project, err := it.Next()
@@ -246,6 +255,9 @@ func (c *Client) ListProjects(ctx context.Context) ([]string, error) {
 			continue
 		}
 		projectIDs = append(projectIDs, project.ProjectId)
+		if len(projectIDs) >= maxProjects {
+			break
+		}
 	}
 	return projectIDs, nil
 }

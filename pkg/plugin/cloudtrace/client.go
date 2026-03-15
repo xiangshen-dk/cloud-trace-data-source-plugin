@@ -80,6 +80,7 @@ func NewClient(ctx context.Context, jsonCreds []byte, universeDomain string) (*C
 	}
 	rClient, err := resourcemanager.NewProjectsClient(ctx, opts...)
 	if err != nil {
+		_ = client.Close()
 		return nil, err
 	}
 
@@ -101,6 +102,7 @@ func NewClientWithGCE(ctx context.Context, universeDomain string) (*Client, erro
 	}
 	rClient, err := resourcemanager.NewProjectsClient(ctx, opts...)
 	if err != nil {
+		_ = client.Close()
 		return nil, err
 	}
 
@@ -144,6 +146,7 @@ func NewClientWithImpersonation(ctx context.Context, jsonCreds []byte, impersona
 	}
 	rClient, err := resourcemanager.NewProjectsClient(ctx, opts...)
 	if err != nil {
+		_ = client.Close()
 		return nil, err
 	}
 
@@ -170,6 +173,7 @@ func NewClientWithAccessToken(ctx context.Context, accessToken string, universeD
 
 	rClient, err := resourcemanager.NewProjectsClient(ctx, opts...)
 	if err != nil {
+		_ = client.Close()
 		return nil, err
 	}
 
@@ -201,6 +205,7 @@ func NewClientWithPassThrough(ctx context.Context, headers map[string]string, un
 	}
 	rClient, err := resourcemanager.NewProjectsClient(ctx, opts...)
 	if err != nil {
+		_ = client.Close()
 		return nil, err
 	}
 

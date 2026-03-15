@@ -106,8 +106,14 @@ export class ConfigEditor extends PureComponent<Props> {
                 id="serviceAccount"
                 value={this.state.sa}
                 onChange={(e) => {
-                  this.setState({ sa: e.target.value }, () => {
-                    this.props.options.jsonData.serviceAccountToImpersonate = this.state.sa;
+                  const newSa = e.target.value;
+                  this.setState({ sa: newSa });
+                  onOptionsChange({
+                    ...options,
+                    jsonData: {
+                      ...options.jsonData,
+                      serviceAccountToImpersonate: newSa,
+                    },
                   });
                 }}
               />

@@ -134,7 +134,16 @@ export class DataSource extends DataSourceWithBackend<Query, CloudTraceOptions> 
    * @returns Boolean of whether or not to hide the attempted query
    */
   filterQuery(query: Query): boolean {
-    return !query.hide;
+    if (query.hide) {
+      return false;
+    }
+    if (query.queryType === 'traceID' && !(query.traceId || '').trim()) {
+      return false;
+    }
+    if (!query.queryType && !query.projectId) {
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -187,7 +196,11 @@ export class DataSource extends DataSourceWithBackend<Query, CloudTraceOptions> 
     }
 
     const idField = response.fields.find((f) => f.name === 'Trace ID');
-    idField!.config.links = [
+    if (!idField) {
+      return [response];
+    }
+    idField.config = idField.config || {};
+    idField.config.links = [
       {
         title: 'Trace: ${__value.raw}',
         url: '',

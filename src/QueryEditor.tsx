@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import React, { KeyboardEvent, useCallback, useMemo, useRef, useState } from 'react';
+import React, { KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { QueryEditorProps, SelectableValue } from '@grafana/data';
 import { Alert, InlineField, InlineFieldRow, AsyncSelect, Input, LinkButton, RadioButtonGroup, TextArea, Tooltip } from '@grafana/ui';
 import { DataSource } from './datasource';
@@ -77,13 +77,30 @@ export function CloudTraceQueryEditor({ datasource, query, range, onChange, onRu
   }, [datasource]);
 
 
-  // Apply defaults if needed
-  if (!query.projectId) {
-    datasource.getDefaultProject().then(r => query.projectId = r);
-  }
-  if (query.queryText == null) {
-    query.queryText = defaultQuery.queryText;
-  }
+  // Apply defaults if needed — use onChange so they are persisted in the panel config
+  useEffect(() => {
+    const needsQueryText = query.queryText == null && defaultQuery.queryText;
+    const needsProjectId = !query.projectId;
+
+    if (!needsQueryText && !needsProjectId) {
+      return;
+    }
+
+    if (needsProjectId) {
+      datasource.getDefaultProject().then((project) => {
+        const nextQuery = { ...query };
+        if (needsQueryText) {
+          nextQuery.queryText = defaultQuery.queryText;
+        }
+        if (project) {
+          nextQuery.projectId = project;
+        }
+        onChange(nextQuery);
+      });
+    } else if (needsQueryText) {
+      onChange({ ...query, queryText: defaultQuery.queryText });
+    }
+  }, [query, datasource, onChange]);
 
   /**
    * Keep an up-to-date URI that links to the equivalent query in the GCP console

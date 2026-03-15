@@ -1,4 +1,18 @@
 # Changelog
+## 1.3.1 (2026-03-15)
+* Improve project dropdown performance with AsyncSelect and server-side search
+* Cache default project list to reduce redundant backend requests
+* Cap ListProjects results to 100 for performance
+* Use Grafana UI components (Field, Input, Alert) in ConfigEditor and QueryEditor
+* Fix log levels from Warn to Error for GCE and ListProjects errors
+* Add request URL parsing for project search query support
+* Add .gitattributes for GitHub language statistics
+* Enhance filterQuery to skip empty traceID and missing projectId queries
+* Add null safety guard in addLinksToTraceIdColumn
+* Persist default query values via onChange in QueryEditor
+* Fix resource leak: close trace client when resource manager init fails
+* Fix direct props mutation in ConfigEditor service account impersonation
+
 ## 1.3.0 (2026-03-09)
 * Support OAuth passthrough authentication
 * Add universe domain support
